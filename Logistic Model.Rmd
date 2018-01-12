@@ -1,0 +1,222 @@
+
+---
+title: "Telcom Churn -- Logistic model"
+author: "Team ISSSR"
+
+output: html_document:
+toc: yes
+---
+
+```{r}
+library(readr)
+library(woe)
+library(car)
+require("randomForest")
+require("ROCR")
+#install.packages("neuralnet")
+require(neuralnet)
+#install.packages("nnet")
+require(nnet)
+require(ggplot2)
+#install.packages("caret")
+library(caret)
+#install.packages("Metrics")
+library(Metrics)
+#install.packages("gbm")
+library(gbm)
+library(caTools)
+#install.packages("e1071")
+library(ROCR)
+library(e1071)
+library(caret)
+
+#library(devtools)
+
+#install.packages("woe")
+library(woe)
+#install.packages("devtools")
+library(devtools)
+#install.packages("riv")
+library(riv) 
+
+```
+
+```{r}
+churn <- read_csv("C:/Users/suyas/Downloads/Predictive - Shung/Predicitive Dataset/WA_Fn-UseC_-Telco-Customer-Churn.csv")
+attach(churn)
+```
+## Add a new data column if output is categorical into numerical
+```{r}
+
+churn$churn_number <- 0
+churn$churn_number[churn$Churn == 'Yes'] <- 1
+#str(churn)
+```
+
+
+## Creating different bins for important variables and renaming them
+```{r}
+churn$tenure_M2M  <- (tenure * MonthlyCharges)
+churn<-cbind(churn,class.ind(churn$InternetService))
+names(churn)[names(churn)=="No"] <- "NoFibreOptic"
+names(churn)[names(churn)=="DSL"] <- "Internet_DSL"
+names(churn)[names(churn)=="Fiber optic"] <- "Internet_FiberOptic"
+
+
+churn<-cbind(churn,class.ind(churn$OnlineSecurity))
+names(churn)[names(churn)=="No"] <- "OnlineSecurity_No"
+names(churn)[names(churn)=="Yes"] <- "OnlineSecurity_Yes"
+
+churn<-cbind(churn,class.ind(churn$PaymentMethod))
+
+churn<-cbind(churn,class.ind(churn$PhoneService))
+names(churn)[names(churn)=="No"] <- "PhoneService_No"
+names(churn)[names(churn)=="Yes"] <- "PhoneService_Yes"
+
+churn<-cbind(churn,class.ind(churn$TechSupport))
+names(churn)[names(churn)=="No"] <- "TechSupport_No"
+names(churn)[names(churn)=="Yes"] <- "TechSupport_Yes"
+names(churn)[names(churn)=="No internet service"] <- "TechSupport_No_Int"
+
+churn<-cbind(churn,class.ind(churn$Contract))
+names(churn)[names(churn)=="Month-to-month"] <- "Contract_MM"
+names(churn)[names(churn)=="One year"] <- "Contract_OneYear"
+names(churn)[names(churn)=="Two year"] <- "Contract_TwoYear"
+
+churn<-cbind(churn,class.ind(churn$PaperlessBilling))
+names(churn)[names(churn)=="No"] <- "PaperlessBilling_No"
+names(churn)[names(churn)=="Yes"] <- "PaperlessBilling_Yes"
+
+churn<-cbind(churn,class.ind(churn$Partner))
+names(churn)[names(churn)=="No"] <- "Partner_No"
+names(churn)[names(churn)=="Yes"] <- "Partner_Yes"
+
+
+names(churn)[names(churn)=="Electronic check"] <- "Electronic_check_PM"
+
+#str(churn)
+
+```
+
+## Breaking Tenure into sub groups
+```{r}
+churn$tenure_group<- NULL
+group_tenure <- function(tenure)
+  {
+     x<- tenure
+      if( x<12) {tenure_group<- 'tenure_group0_12'}
+      else{
+         if(x >= 12 & x<24) {tenure_group<- 'tenure_group12_24'}
+         else{
+            if(x >= 24 & x<48 ) {tenure_group<- 'tenure_group24_48'}
+            else {tenure_group<-'tenure_group48_60'}
+             }
+      }
+  }
+
+
+
+churn$tenure_group <- sapply(churn$tenure,group_tenure)
+#str(churn)
+churn$tenure_group <- as.factor(churn$tenure_group)
+
+churn<-cbind(churn,class.ind(churn$tenure_group))
+
+```
+
+
+
+## Data sampling ( partition into test and training dataset)
+```{r}
+set.seed(123)
+sample = sample.split(churn$churn_number, SplitRatio = .75)
+train = subset(churn, sample == TRUE)
+test  = subset(churn, sample == FALSE)
+nrow(train)
+nrow(test)
+#write.csv(train, "C:/Users/suyas/Downloads/Predictive - Shung/Project/Train.csv", row.names = FALSE)
+#write.csv(test, "C:/Users/suyas/Downloads/Predictive - Shung/Project/Test.csv", row.names = FALSE)
+```
+
+## Build a Logistic Regression Model
+```{r}
+fit<- glm(train$churn_number ~ tenure * Contract_MM +
+                Internet_FiberOptic+PaperlessBilling_Yes+Electronic_check_PM,
+          family = binomial("logit"),
+              data = train)
+summary(fit)
+```
+## Feature anaylsis
+```{r}
+anova(fit, test="Chisq")
+```
+
+
+## train data predictions
+```{r}
+fit.result.train<-predict(fit,newdata=train,type='response')
+
+fit.result.train<-ifelse(fit.result.train > 0.5,1,0)
+misClasificError.train <- mean(fit.result.train != train$churn_number)
+print(paste('Accuracy',1-misClasificError.train))
+xtab<-  table(train$churn,fit.result.train)
+confusionMatrix(xtab)
+
+```
+## AUC train data
+```{r}
+#str(train)
+fit.results<-predict(fit,newdata = train)
+auc(train$churn_number,fit.results)
+```
+
+
+##test data predictions
+```{r}
+fit.results.prob <- predict(fit,newdata=test)
+fit.results.prob <- ifelse(fit.results.prob > 0.5,1,0)
+misClasificError <- mean(fit.results.prob != test$churn_number)
+print(paste('Accuracy',1-misClasificError))
+#auc(test$churn_number,fit.results.prob)
+
+xtest<-  table(test$churn,fit.results.prob)
+confusionMatrix(xtest)
+
+
+```
+
+ 
+# AUC on test data, dont calculate it on the the actual predicted values rather on the probability, AUC on probability will decrease
+```{r}
+fit.results<-predict(fit,newdata = test)
+auc(test$churn,fit.results)
+```
+
+## to check multicollinearity
+```{r}
+vif(fit)
+```
+
+
+
+
+## K fold Cross validation
+```{r}
+#str(train)
+#train$churn_number <- as.factor(train$churn_number)
+ctrl <- trainControl(method = "repeatedcv", number = 10, savePredictions = TRUE)
+
+mod_fit <- train(churn_number ~ tenure+ tenure_M2M +
+                Internet_FiberOptic+Contract_MM+PaperlessBilling_Yes+Electronic_check_PM, data=train, method="glm", family="binomial", trControl = ctrl, tuneLength = 5)
+
+fit.results = predict(mod_fit, newdata=test)
+fit.results.prob <- ifelse(fit.results.prob > 0.5,1,0)
+misClasificError <- mean(fit.results.prob != test$churn_number)
+print(paste('Accuracy',1-misClasificError))
+confusionMatrix(fit.results.prob, test$churn_number)
+auc(test$churn_number,fit.results)
+
+```
+
+
+
